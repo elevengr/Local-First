@@ -29,7 +29,7 @@ With Rust installed, open the terminal and run the following steps.
 First, clone the project repository.
 
 ```
-git clone https://github.com/project-url
+git clone https://github.com/elevengr/Local-First
 ```
 
 Then, enter the project folder.
