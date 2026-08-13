@@ -1,16 +1,23 @@
 use uuid::Uuid;
-use std::io::Write;
+use std::{io::Write};
 use std::path::Path;
 use serde::{Serialize, Deserialize};
 use std::fs::{self, OpenOptions, File};
 use inquire::{Select, Text, DateSelect};
-use chrono::{NaiveDate, DateTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
+
+#[derive(Debug ,Serialize, Deserialize, Clone, PartialEq)]
+enum Status {
+    FAILED,
+    PENDING,
+    COMPLETED
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct Habit {
     id: Uuid,
     name: String,
-    status: bool,
+    status: Status,
     create_at: DateTime<Utc>,
     time_limit: NaiveDate
 }
@@ -19,8 +26,23 @@ struct Habit {
 struct HabitCompletHistory {
     id: Uuid,
     habit_id: Uuid,
-    status_alterate: bool,
+    status_alterate: Status,
     update_at: DateTime<Utc>
+}
+
+struct ReturnLoadData {
+    habits_list: Vec<Habit>,
+    habits_history_list: Vec<HabitCompletHistory>
+}
+
+fn refresh_status(habits: &mut Vec<Habit>) {
+    let today: NaiveDate = Local::now().date_naive();
+
+    for habit in habits.iter_mut() {
+        if habit.status == Status::PENDING && today > habit.time_limit {
+            habit.status = Status::FAILED;
+        }
+    }
 }
 
 async fn create_files(path: &str, path_complet_history: &str) {
@@ -37,37 +59,57 @@ async fn create_files(path: &str, path_complet_history: &str) {
     };
 }
 
+async fn load_habits(path_habit: &str, path_complet_history: &str) -> ReturnLoadData {
+
+    let mut habits_list: Vec<Habit>;
+    let habits_complet_history_list: Vec<HabitCompletHistory>;
+
+    if Path::new(path_habit).exists() {
+        let content_file = fs::read_to_string(path_habit).expect("Failed in read file");
+
+        if content_file.trim().is_empty() {
+            habits_list = Vec::new()
+        } else {
+            habits_list = serde_json::from_str(&content_file).expect("Filed in convert JSON old")
+        }
+    } else {
+        habits_list = Vec::new()
+    };
+    
+    if Path::new(path_complet_history).exists() {
+        let content_file = fs::read_to_string(path_complet_history).expect("Failed in read file");
+        
+        if content_file.trim().is_empty() {
+           habits_complet_history_list = Vec::new()
+        } else {
+            habits_complet_history_list = serde_json::from_str(&content_file).expect("Filed in convert JSON old")
+        }
+    } else {
+        habits_complet_history_list = Vec::new()
+    };
+
+    refresh_status(&mut habits_list);
+
+    let return_data = ReturnLoadData {
+        habits_list: habits_list,
+        habits_history_list: habits_complet_history_list
+    };
+
+    return_data
+}
+
 #[tokio::main]
 async fn main() {
 
-    let path = "habit.json";
+    let path_habit = "habit.json";
     let path_complet_history = "habit_complet_hitory.json";
 
-    create_files(path, path_complet_history).await;
+    create_files(path_habit, path_complet_history).await;
 
-    let mut habits_list: Vec<Habit> = if Path::new(path).exists() {
-        let content_file = fs::read_to_string(path).expect("Failed in read file");
+    let data = load_habits(path_habit, path_complet_history).await;
 
-        if content_file.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(&content_file).expect("Filed in convert JSON old")
-        }
-    } else {
-        Vec::new()
-    };
-
-    let mut habits_complet_history_list: Vec<HabitCompletHistory> = if Path::new(path_complet_history).exists() {
-        let content_file = fs::read_to_string(path_complet_history).expect("Failed in read file");
-
-        if content_file.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(&content_file).expect("Filed in convert JSON old")
-        }
-    } else {
-        Vec::new()
-    };
+    let mut habits_list = data.habits_list;
+    let mut habits_complet_history_list = data.habits_history_list;
 
     let list = vec![
         "Create new habit",
@@ -80,18 +122,19 @@ async fn main() {
 
     let mut exit = false;
     while !exit {
+
         println!("Selectd option: ");
 
         let option_selected = Select::new("Selecione seu cargo:", list.clone())
         .prompt()
         .unwrap();
-
+        
         match option_selected {
-            "Create new habit" => create_new_habit(&mut habits_list, path).await,
-            "Edit habit" => edit_habit(path, &mut habits_list).await,
-            "Delete habit" => del_habit(path, &mut habits_list).await,
+            "Create new habit" => create_new_habit(&mut habits_list, path_habit).await,
+            "Edit habit" => edit_habit(path_habit, &mut habits_list).await,
+            "Delete habit" => del_habit(path_habit, &mut habits_list).await,
             "List habits" => list_habit(&mut habits_list).await,
-            "Complete habit" => complet_habit(path, &mut habits_list, &mut habits_complet_history_list).await,
+            "Complete habit" => complet_habit(path_habit, &mut habits_list, &mut habits_complet_history_list).await,
             "Exit" => exit = true,
             _ => println!("Error, option not found"),
         }
@@ -123,7 +166,7 @@ async fn create_new_habit (habits_list: &mut Vec<Habit>, path: &str) {
     let habit = Habit {
         id: Uuid::new_v4(),
         name: name,
-        status: false,
+        status: Status::PENDING,
         create_at: Utc::now(),
         time_limit: time_limit
     };
@@ -210,7 +253,7 @@ async fn edit_habit (path: &str, habit_list: &mut Vec<Habit>) {
 async fn list_habit (habit_list: &mut Vec<Habit>) {
 
     for habit in habit_list {
-        println!("Name: {} | Status: {} | Time Limit: {} | Created At: {:?}", habit.name, habit.status, habit.time_limit, habit.create_at);
+        println!("Name: {} | Status: {:?} | Time Limit: {} | Created At: {:?}", habit.name, habit.status, habit.time_limit, habit.create_at);
     }
 }
 
@@ -223,14 +266,13 @@ async fn complet_habit (path: &str, habit_list: &mut Vec<Habit>, complet_history
     let habit_id: Uuid = habit_list.iter().find(|h| h.name == habit).unwrap().id;
 
     if let Some(habit) = habit_list.iter_mut().find(|h| h.id == habit_id) {
-        habit.status = true;
 
         let habit_byte = serde_json::to_vec_pretty(habit).unwrap();
 
         let habit_complet_history = HabitCompletHistory {
             id: Uuid::new_v4(),
             habit_id: habit.id,
-            status_alterate: habit.status,
+            status_alterate: Status::COMPLETED,
             update_at: Utc::now()
         };
 
