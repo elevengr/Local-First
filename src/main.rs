@@ -129,6 +129,8 @@ async fn main() {
         .prompt()
         .unwrap();
         
+        refresh_status(&mut habits_list);
+
         match option_selected {
             "Create new habit" => create_new_habit(&mut habits_list, path_habit).await,
             "Edit habit" => edit_habit(path_habit, &mut habits_list).await,
@@ -223,11 +225,39 @@ async fn edit_habit (path: &str, habit_list: &mut Vec<Habit>) {
     let habit_id: Uuid = habit_list.iter().find(|h| h.name == habit).unwrap().id;
 
     if let Some(habit) = habit_list.iter_mut().find(|h| h.id == habit_id) {
-        println!("New name: ");
+        let list = vec![
+            "Name",
+            "Time limit"
+        ];
 
-        let new_name = to_read_line("Enter the new habit name:").parse().expect("Failed in read input");
-        
-        habit.name = new_name;
+        let option_selected = Select::new("Select one option", list.clone())
+        .prompt()
+        .unwrap();
+
+        let mut new_name = || {
+            let new_name = to_read_line("New name: ");
+
+            habit.name = new_name
+        };
+
+        let mut new_time_limit = || {
+
+            if habit.status == Status::FAILED {
+                println!("Habit status is Failed, create new habit");
+            }
+
+            let new_time_limit = DateSelect::new("Enter the habit time limit:")
+            .prompt()
+            .unwrap();
+
+            habit.time_limit = new_time_limit;
+        };
+
+        match option_selected {
+            "Name" => new_name(),
+            "Time limit" => new_time_limit(),
+            _ => println!("Error otion not found")
+        }
 
         let habit_byte = serde_json::to_vec_pretty(habit).unwrap();
         
